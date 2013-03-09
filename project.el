@@ -107,7 +107,8 @@ the new root."
 
 (defun project-guess-indicator ()
   "Guess the project root based on `project-root-file'."
-  (locate-dominating-file project-root-file))
+  (when project-root-file
+    (locate-dominating-file project-root-file)))
 
 (defun project-guess-root-vc ()
   "Guess the project root based on version control files.
