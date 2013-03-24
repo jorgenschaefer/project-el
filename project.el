@@ -33,52 +33,60 @@
 ;; `project-guess-root-functions', or customize
 ;; `project-vc-root-marker' and `project-vc-directory-marker'.
 
-;; Finally, this library allows project-specific variables to be set
-;; and read. To enable this functionality, set `project-root-file' to
-;; a string. This will cause a file of that name to be created in the
-;; project root. You can use `project-set' and `project-get' to set
-;; and get variables from that file.
-
 ;;; Code:
 
 (defgroup project nil
   "Project root settings."
   :group 'programming)
 
-(defcustom project-root-file nil
-  "The file name to use to indicate the project root.
-
-If this is non-nil, when a project root is guessed or explicitly
-set by the user, this file is created in the project root to
-reuse the same project root in the future.")
-
-(defcustom project-guess-root-functions '(project-guess-indicator
-                                          project-guess-root-vc)
+(defcustom project-guess-root-functions '(project-guess-root-ede
+                                          project-guess-root-vc
+                                          project-guess-root-ask-user)
   "A list of functions to be called to guess the current project root.
 
 This is called if the project root is needed, but not specified.
 The functions are called in the context of the file's buffer for
 which a project root is requested, in order until the first
 returns a non-nil value, which will be used as the new project
-root.")
+root."
+  :type 'hook
+  :group 'project)
+
+(defcustom project-root-changed-hook nil
+  "Hook run when the current project root is set or changed."
+  :type 'hook
+  :group 'project)
 
 (defcustom project-vc-root-marker '(".git" ".hg" ".bzr")
   "Files or directories present in the root of a repository.
 
 These are used as indicators of the directory being a suitable
-project root.")
+project root."
+  :type '(repeat string)
+  :group 'project)
 
-(defvar project-vc-directory-marker '(".svn" "CVS")
+(defcustom project-vc-directory-marker '(".svn" "CVS")
   "Files or directories present in repository directories.
 
 These are used to find the project root. If a directory contains
 such a file or directory, but the parent directory does not, this
-is assumed to be a good candidate for a project root.")
+is assumed to be a good candidate for a project root."
+  :type '(repeat string)
+  :group 'project)
+
+
+;;; Internal variables
 
 (defvar project-root nil
-  "The current project root.")
+  "The current project root.
+
+Don't access this variable directly. Use the `project-root' and
+`project-set-root' functions, which see.")
 (make-variable-buffer-local 'project-root)
 (put 'project-root 'safe-local-variable 'file-directory-p)
+
+
+;;; External API
 
 ;;;###autoload
 (defun project-root ()
@@ -87,7 +95,8 @@ is assumed to be a good candidate for a project root.")
 If there is no project root configured, try to find a sensible
 choice by calling `project-guess-root'."
   (when (not project-root)
-    (project-set-root (project-guess-root)))
+    (project-set-root
+     (run-hook-with-args-until-success 'project-guess-root-functions)))
   project-root)
 
 ;;;###autoload
@@ -98,17 +107,10 @@ This will also adjust the directory-local variable to point to
 the new root."
   (interactive "DProject root: ")
   (setq project-root new-root)
-  (project-set 'project-root project-root))
+  (run-hooks 'project-root-changed-hook))
 
-(defun project-guess-root ()
-  "Use `project-guess-root-functions' to guess the current project root."
-  (or (run-hook-with-args-until-success 'project-guess-root-functions)
-      (read-directory-name "Project root: ")))
 
-(defun project-guess-indicator ()
-  "Guess the project root based on `project-root-file'."
-  (when project-root-file
-    (locate-dominating-file (buffer-file-name) project-root-file)))
+;;; Possible values for `project-guess-root-functions'.
 
 (defun project-guess-root-vc ()
   "Guess the project root based on version control files.
@@ -128,47 +130,16 @@ See the variables `project-vc-root-marker' and
            (throw 'return t)))
        nil))))
 
-(defun project-set (varname value)
-  "Set the variable VARNAME to VALUE.
+(defun project-guess-root-ede ()
+  "Return the project root of the EDE project, if any."
+  (when (and (boundp 'ede-object-root-project)
+             ede-object-root-project)
+    (ede-project-root-directory ede-object-root-project)))
 
-This uses the `project-root-file' file for settings."
-  (when project-root-file
-    (let ((project-file (concat project-root "/"
-                                project-root-file)))
-      (with-temp-buffer
-        (when (file-exists-p project-file)
-          (insert-file-contents-literally project-file))
-        (goto-char (point-min))
-        (let* ((data (ignore-errors
-                       (read buf)))
-               (cell (assq varname data)))
-          (if cell
-              (setcdr cell value)
-            (setq data (cons (cons varname value)
-                             data)))
-          (erase-buffer)
-          (insert ";; Project data for Emacs' project.el\n\n")
-          (pp data (current-buffer))
-          (write-region (point-min) (point-max) project-file
-                        nil 'dont-display-message))))))
+(defun project-guess-root-ask-user ()
+  "Ask the user for the project root."
+  (read-directory-name "Project root: "))
 
-(defun project-get (varname &optional default)
-  "Retrieve the value of VARNAME. If none is set, return DEFAULT.
-
-This uses the `project-root-file' file for settings."
-  (when project-root-file
-    (let ((project-file (concat project-root "/"
-                                project-root-file)))
-      (with-temp-buffer
-        (when (file-exists-p project-file)
-          (insert-file-contents-literally project-file))
-        (goto-char (point-min))
-        (let* ((data (ignore-errors
-                       (read buf)))
-               (cell (assq varname data)))
-          (if cell
-              (cdr cell)
-            default))))))
 
 (provide 'project)
 ;;; project.el ends here
